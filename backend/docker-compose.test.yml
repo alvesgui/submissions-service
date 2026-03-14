@@ -1,0 +1,63 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ambiente isolado exclusivo para testes de integração.
+# Portas diferentes para não conflitar com o ambiente de dev:
+#   Postgres:   5433 (dev usa 5432)
+#   LocalStack: 4567 (dev usa 4566)
+#
+# Os recursos AWS (bucket S3 + fila SQS) são criados automaticamente
+# pelo script scripts/localstack_init_test.sh ao subir o container.
+# Não é necessário nenhum comando manual.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  postgres_test:
+    image: postgres:16-alpine
+    platform: linux/arm64
+    container_name: submission_postgres_test
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+      POSTGRES_DB: test_db
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d test_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks:
+      - test_network
+
+  localstack_test:
+    image: localstack/localstack:3.8
+    platform: linux/arm64
+    container_name: submission_localstack_test
+    ports:
+      - "4567:4566"
+    environment:
+      - SERVICES=sqs,s3
+      - DEBUG=0
+      - DEFAULT_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      # Script executado automaticamente quando o LocalStack estiver pronto.
+      # Cria o bucket S3 e a fila SQS necessários para os testes.
+      - ./scripts/localstack_init_test.sh:/etc/localstack/init/ready.d/init.sh
+    tmpfs:
+      - /var/lib/localstack
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health | python3 -c \"import sys,json; h=json.load(sys.stdin)['services']; sys.exit(0 if h.get('sqs')=='running' and h.get('s3')=='running' else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    networks:
+      - test_network
+
+networks:
+  test_network:
+    driver: bridge
